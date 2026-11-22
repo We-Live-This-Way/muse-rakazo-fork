@@ -386,7 +386,7 @@ export async function endCallBeforeSessionEnd(): Promise<void> {
   await abortableDelay(SIGN_OUT_HANG_UP_MS, landed.signal);
 }
 
-// A server switch discards the old server's session; the call hangs up on it first.
+// A server switch parks the old server's session; the call hangs up on it first.
 configureSessionEndHangUp(endCallBeforeSessionEnd);
 
 export function toggleMute(): void {

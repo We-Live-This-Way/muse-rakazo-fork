@@ -24,7 +24,7 @@ export async function confirmUnsentSendLoss(action: UnsentSendLossAction): Promi
       confirmLabel: t`Sign in anyway`,
     },
     "server-switch": {
-      message: t`Switching servers deletes unsent messages.`,
+      message: t`Switching servers leaves unsent messages waiting for the previous server.`,
       confirmLabel: t`Switch anyway`,
     },
   }[action];

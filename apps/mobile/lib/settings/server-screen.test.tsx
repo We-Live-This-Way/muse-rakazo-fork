@@ -202,7 +202,7 @@ function alertButtons(index = 0) {
   return vi.mocked(Alert.alert).mock.calls[index]![2]!;
 }
 
-it("asks before switching servers deletes unsent messages", async () => {
+it("asks before switching servers leaves unsent messages waiting", async () => {
   vi.mocked(hasUnsentSends).mockReturnValue(true);
   try {
     await renderServer("https://two.example.test");
@@ -251,7 +251,7 @@ it("saves the same server without asking about unsent messages", async () => {
   expect(api.save).toHaveBeenCalled();
 });
 
-it("asks before returning to the default server deletes unsent messages", async () => {
+it("asks before returning to the default server leaves unsent messages waiting", async () => {
   vi.mocked(hasUnsentSends).mockReturnValue(true);
   server.custom = true;
   try {

@@ -57,3 +57,6 @@ apps/web/public/computer-screen/sdk/
 
 # Private marketing pages, cloned in by apps/www/scripts/clone-marketing.sh
 apps/www/src/marketing/
+
+# Fork release keystore (secret, never commit)
+keystore/

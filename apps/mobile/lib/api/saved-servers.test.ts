@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultApiBase } from "./endpoint";
 import {
   loadSavedServers,
+  SEEDED_API_BASE,
+  MAX_SAVED_SERVER_LABEL_LENGTH,
   MAX_SAVED_SERVERS,
   recordSavedServer,
   removeSavedServer,
@@ -34,6 +36,9 @@ beforeEach(async () => {
     store.delete(key);
   });
   await loadSavedServers();
+  // The first load seeds the home server; these tests start from an empty list. The seed marker stays
+  // written, so removing the entry does not resurrect it.
+  await removeSavedServer(SEEDED_API_BASE);
 });
 
 describe("saved servers", () => {
@@ -187,6 +192,52 @@ describe("saved servers", () => {
     ]);
     await recordSavedServer("https://new.example.test", ACCESS, { keepHeaders: true });
     expect(savedServers()[0]).toEqual({ apiBase: "https://new.example.test", headers: ACCESS });
+  });
+
+  it("keeps a trimmed label, drops an empty one, and truncates an overlong one", async () => {
+    store.set(
+      KEY,
+      JSON.stringify([
+        { apiBase: ONE, headers: {}, label: "  Home server  " },
+        { apiBase: TWO, headers: {}, label: "   " },
+        {
+          apiBase: "https://long.example.test",
+          headers: {},
+          label: "x".repeat(MAX_SAVED_SERVER_LABEL_LENGTH + 10),
+        },
+      ]),
+    );
+    await loadSavedServers();
+    expect(savedServers()).toEqual([
+      { apiBase: ONE, headers: {}, label: "Home server" },
+      { apiBase: TWO, headers: {} },
+      {
+        apiBase: "https://long.example.test",
+        headers: {},
+        label: "x".repeat(MAX_SAVED_SERVER_LABEL_LENGTH),
+      },
+    ]);
+  });
+
+  it("sets a label when one is passed and keeps the old one without it", async () => {
+    await recordSavedServer(ONE, {}, { label: "  Home  " });
+    expect(savedServers()).toEqual([{ apiBase: ONE, headers: {}, label: "Home" }]);
+    await recordSavedServer(ONE, ACCESS);
+    expect(savedServers()).toEqual([{ apiBase: ONE, headers: ACCESS, label: "Home" }]);
+    await recordSavedServer(ONE, ACCESS, { label: "Office" });
+    expect(savedServers()).toEqual([{ apiBase: ONE, headers: ACCESS, label: "Office" }]);
+    await removeSavedServer(ONE);
+    expect(savedServers()).toEqual([]);
+  });
+
+  it("lists a labeled default server and still refuses an unlabeled one", async () => {
+    expect(await recordSavedServer(defaultApiBase(), {}, { label: "Home server" })).toBe(true);
+    expect(savedServers()).toEqual([{ apiBase: defaultApiBase(), headers: {}, label: "Home server" }]);
+    await loadSavedServers();
+    expect(savedServers()).toEqual([{ apiBase: defaultApiBase(), headers: {}, label: "Home server" }]);
+    await removeSavedServer(defaultApiBase());
+    expect(await recordSavedServer(defaultApiBase(), {})).toBe(false);
+    expect(savedServers()).toEqual([]);
   });
 
   it("reports a failed read and a failed write instead of dropping them silently", async () => {

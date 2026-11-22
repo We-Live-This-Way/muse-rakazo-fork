@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { currentApiBase } from "./api.js";
 import { loadApiBase, resetApiBase, saveApiBase } from "./api-server.js";
 import { defaultApiBase } from "./endpoint.js";
-import { loadSavedServers, savedServers } from "./saved-servers.js";
+import {
+  loadSavedServers,
+  SEEDED_API_BASE,
+  SEEDED_LABEL,
+  removeSavedServer,
+  savedServers,
+} from "./saved-servers.js";
 
 vi.mock("expo-secure-store", () => ({
   getItemAsync: vi.fn(),
@@ -16,6 +22,9 @@ vi.mock("expo-secure-store", () => ({
 vi.mock("../notifications/live-notifications.js", () => ({
   resumeLiveNotifications: vi.fn(async () => undefined),
   stopLiveNotifications: vi.fn(async () => undefined),
+}));
+vi.mock("../notifications/push.js", () => ({
+  registerPushToken: vi.fn(async () => undefined),
 }));
 vi.mock("./network-cache.js", () => ({ clearNetworkCache: vi.fn() }));
 
@@ -42,6 +51,9 @@ beforeEach(async () => {
   await resetApiBase();
   store.clear();
   await loadSavedServers();
+  // The first load seeds the home server; the switch tests below start from an empty list. The seed
+  // marker stays written, so removing the entry does not resurrect it.
+  await removeSavedServer(SEEDED_API_BASE);
 });
 
 afterEach(() => {
@@ -122,6 +134,57 @@ describe("saved servers across a server switch", () => {
     store.set("rakazo.api_base", TWO);
     await loadApiBase();
     expect(listed()).toEqual([TWO, ONE]);
+  });
+
+  it("keeps a label on the server it left and the server it returns to", async () => {
+    store.clear();
+    await loadSavedServers(); // Seeds the home server with its label, as a fresh install has it.
+    await saveApiBase(SEEDED_API_BASE, {});
+    await saveApiBase(TWO, {});
+    expect(savedServers()).toEqual([
+      { apiBase: TWO, headers: {} },
+      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+    ]);
+    await saveApiBase(SEEDED_API_BASE, {});
+    expect(savedServers()).toEqual([
+      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+      { apiBase: TWO, headers: {} },
+    ]);
+  });
+
+  it("seeds the home server on a fresh store and writes the seed marker", async () => {
+    store.clear();
+    await loadSavedServers();
+    expect(savedServers()).toEqual([
+      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+    ]);
+    expect(store.get(SAVED_KEY)).toContain(SEEDED_API_BASE);
+    expect(store.get("rakazo.saved_servers_seeded")).toBe("1");
+  });
+
+  it("does not resurrect the home server after it is removed", async () => {
+    store.clear();
+    await loadSavedServers();
+    expect(await removeSavedServer(SEEDED_API_BASE)).toBe(true);
+    await loadSavedServers();
+    expect(savedServers()).toEqual([]);
+    expect(store.get("rakazo.saved_servers_seeded")).toBe("1");
+  });
+
+  it("does not overwrite a stored list with the seed", async () => {
+    store.clear();
+    store.set(SAVED_KEY, "not json");
+    await loadSavedServers();
+    expect(savedServers()).toEqual([]);
+    expect(store.has("rakazo.saved_servers_seeded")).toBe(false);
+  });
+
+  it("seeds exactly one server and never the laptop server", async () => {
+    store.clear();
+    await loadSavedServers();
+    expect(savedServers()).toHaveLength(1);
+    expect(savedServers()[0]?.apiBase).toBe(SEEDED_API_BASE);
+    expect(store.get(SAVED_KEY)).not.toContain("3100");
   });
 
   it("leaving a server whose headers did not load keeps the headers it was saved with", async () => {

@@ -1,3 +1,4 @@
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as SecureStore from "expo-secure-store";
 import {
   invalidateArtifactCacheSession,
@@ -8,11 +9,110 @@ import { rememberSignedIn } from "../auth/returning-user";
 import { forgetReferrals } from "../billing/referral";
 import { stopLiveNotifications } from "../notifications/live-notifications";
 import { clearFailedSends } from "../thread/send/thread-feedback";
+import { defaultApiBase } from "./endpoint";
 import { clearNetworkCache } from "./network-cache";
 
-const SESSION_KEY = "rakazo.session_token";
+/** One token per server, so switching servers parks the session instead of ending it. */
+const SESSION_KEY_PREFIX = "rakazo.session_token:";
+/** The single-key era's token. Migration source only, never written again. */
+const LEGACY_SESSION_KEY = "rakazo.session_token";
 // Named for the screen that first kept it; renaming it would drop every saved identity.
 const VERIFIED_SCOPE_KEY = "rakazo.integrations-scope";
+
+/** The token key for one server. `apiBase` is a normalized origin, so two servers never share one. */
+export function sessionKeyFor(apiBase: string): string {
+  return `${SESSION_KEY_PREFIX}${apiBase}`;
+}
+
+/**
+ * The server the token functions read and write for. `session.ts` is imported by `api.ts`, so it
+ * cannot read `currentApiBase()` back without a cycle; only `api-server.ts` writes this, always
+ * in step with `setCachedApiBase()`. Invariant: it equals `currentApiBase()` before any token
+ * operation. Writers are `loadApiBase()` at boot and the switch commit point.
+ */
+let activeApiBase = defaultApiBase();
+export function setSessionServer(apiBase: string): void {
+  activeApiBase = apiBase;
+  // The invalidation belongs to the previous server's in-memory session: a save that failed
+  // there must not suppress the new server's stored token, which is read fresh below.
+  sessionInvalidated = false;
+  sessionFallback = undefined;
+}
+
+function currentSessionKey(): string {
+  return sessionKeyFor(activeApiBase);
+}
+
+/**
+ * A server switch moved the active session without changing any stored token. Bumping the
+ * generation discards in-flight old-server requests and remounts the inbox, which re-reads the
+ * token for the new server; the verified scope is invalidated in memory only, so the next
+ * `verifiedScope()` call re-verifies with one `me` call. The artifact namespace and disk caches
+ * are deliberately untouched: the parked server's data stays filed under its own scope.
+ */
+export function noteSessionServerChange(): void {
+  sessionGeneration += 1;
+  scopeInvalidated = true;
+  sessionFallback = undefined;
+  publishSessionGeneration();
+}
+
+/** The server a legacy-token migration last completed for; a new server re-runs it. */
+let migratedApiBase: string | undefined;
+
+/**
+ * Adopts the single-key era's token into the current server's per-origin key, once per server.
+ * True when there is nothing left to adopt for this server. The legacy token necessarily belongs
+ * to the stored current server, because the old app only ever had one server at a time.
+ */
+export async function ensureLegacySessionMigrated(): Promise<void> {
+  if (migratedApiBase === activeApiBase) return;
+  const server = activeApiBase;
+  const generation = sessionGeneration;
+  let done = false;
+  try {
+    const key = sessionKeyFor(server);
+    const current = await SecureStore.getItemAsync(key);
+    if (current) {
+      // The per-origin token wins. A legacy key that differs can only be a leftover of a
+      // half-finished earlier migration, since nothing in the fork ever writes it, so it goes too.
+      await bestEffort(
+        "delete the migrated legacy session token",
+        SecureStore.deleteItemAsync(LEGACY_SESSION_KEY),
+      );
+      done = true;
+    } else {
+      const legacy = await SecureStore.getItemAsync(LEGACY_SESSION_KEY);
+      if (!legacy) {
+        done = true;
+      } else if (generation !== sessionGeneration) {
+        // A sign-in landed while this read was in flight; its token owns the store now.
+        done = true;
+      } else {
+        let adopted = false;
+        try {
+          await SecureStore.setItemAsync(key, legacy);
+          adopted = true;
+        } catch {
+          // Keep the legacy key and treat the session as memory-only; a restart loses it, and
+          // the next launch retries the adoption.
+          sessionFallback = legacy;
+        }
+        if (adopted) {
+          await bestEffort(
+            "delete the migrated legacy session token",
+            SecureStore.deleteItemAsync(LEGACY_SESSION_KEY),
+          );
+        }
+        done = true;
+      }
+    }
+  } catch {
+    // An unreadable store leaves the adoption for a later read; the token read reports it.
+    done = false;
+  }
+  if (done && activeApiBase === server) migratedApiBase = server;
+}
 
 export type SavedVerifiedScope = {
   apiBase: string;
@@ -196,7 +296,7 @@ export async function saveSessionToken(token: string) {
     const clearingScope = invalidateSessionCaches();
     // Marked before the token lands, so an account deletion that clears it afterwards also clears the mark.
     await rememberSignedIn();
-    await enqueueScopeWrite(() => SecureStore.setItemAsync(SESSION_KEY, token));
+    await enqueueScopeWrite(() => SecureStore.setItemAsync(currentSessionKey(), token));
     await clearingScope;
   } finally {
     sessionSaves -= 1;
@@ -230,11 +330,11 @@ async function clearStoredSessionToken(generation: number): Promise<boolean> {
   return enqueueScopeWrite(async () => {
     let cleared = false;
     try {
-      await SecureStore.deleteItemAsync(SESSION_KEY);
+      await SecureStore.deleteItemAsync(currentSessionKey());
       cleared = true;
     } catch {
       try {
-        await SecureStore.setItemAsync(SESSION_KEY, "");
+        await SecureStore.setItemAsync(currentSessionKey(), "");
         cleared = true;
       } catch {
         // A failed wipe keeps the bearer invalid in memory.
@@ -371,7 +471,7 @@ async function recoverRotatedToken(): Promise<boolean> {
   const generation = sessionGeneration;
   let token: string | undefined;
   try {
-    const stored = await SecureStore.getItemAsync(SESSION_KEY);
+    const stored = await SecureStore.getItemAsync(currentSessionKey());
     // Only the token the change replaced is swapped; any other session ignores the record.
     token = stored ? await rotatedArtifactCacheToken(stored) : undefined;
   } catch {
@@ -391,12 +491,16 @@ async function recoverRotatedToken(): Promise<boolean> {
 /** Writes the token unless another session change started; that change then owns the store. */
 function saveRotatedToken(generation: number, token: string): Promise<void> {
   return enqueueScopeWrite(async () => {
-    if (generation === sessionGeneration) await SecureStore.setItemAsync(SESSION_KEY, token);
+    if (generation === sessionGeneration)
+      await SecureStore.setItemAsync(currentSessionKey(), token);
   });
 }
 
 /** Snapshots the active token without treating an unreadable store as an empty session. */
 export async function snapshotSessionToken(): Promise<{ ok: true; value: string } | { ok: false }> {
+  // The legacy token is adopted before the rotation recovery reads the store, so a password
+  // change that stopped mid-migration still finds the token it replaced.
+  await ensureLegacySessionMigrated();
   recovery ??= recoverRotatedToken();
   const attempt = recovery;
   if (!(await attempt)) {
@@ -408,7 +512,7 @@ export async function snapshotSessionToken(): Promise<{ ok: true; value: string 
   if (sessionInvalidated) return { ok: true, value: "" };
   const generation = sessionGeneration;
   try {
-    const value = (await SecureStore.getItemAsync(SESSION_KEY)) ?? "";
+    const value = (await SecureStore.getItemAsync(currentSessionKey())) ?? "";
     return {
       ok: true,
       value: generation === sessionGeneration && !sessionInvalidated ? value : "",
@@ -425,8 +529,24 @@ export async function snapshotSessionToken(): Promise<{ ok: true; value: string 
 export async function snapshotStoredSessionToken(): Promise<
   { ok: true; value: string } | { ok: false }
 > {
+  await ensureLegacySessionMigrated();
   try {
-    return { ok: true, value: (await SecureStore.getItemAsync(SESSION_KEY)) ?? "" };
+    return { ok: true, value: (await SecureStore.getItemAsync(currentSessionKey())) ?? "" };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * The token stored for a server without making it active, so a switch can read the target's
+ * parked session before the commit point. No migration: the legacy token belongs to the boot
+ * server, which is already the active one when a switch starts.
+ */
+export async function snapshotStoredSessionTokenFor(
+  apiBase: string,
+): Promise<{ ok: true; value: string } | { ok: false }> {
+  try {
+    return { ok: true, value: (await SecureStore.getItemAsync(sessionKeyFor(apiBase))) ?? "" };
   } catch {
     return { ok: false };
   }

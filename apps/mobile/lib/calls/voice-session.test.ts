@@ -44,6 +44,7 @@ vi.mock("../notifications/live-notifications", () => ({
   resumeLiveNotifications: vi.fn(async () => undefined),
   stopLiveNotifications: vi.fn(async () => undefined),
 }));
+vi.mock("../notifications/push", () => ({ registerPushToken: vi.fn(async () => undefined) }));
 vi.mock("../api/network-cache", () => ({ clearNetworkCache: vi.fn() }));
 vi.mock("../thread/send/thread-feedback", () => ({
   clearFailedSends: vi.fn(),

@@ -76,7 +76,7 @@ async function authenticate(
   if (!token) throw new Error(missingSession);
   // A server switch or sign-out while the request was in flight: this token belongs to a server
   // the app no longer uses, so it is never saved and its session is ended there. A switch still
-  // running has already cleared the session but not yet moved to the new server.
+  // running is about to move to the new server.
   const current = () =>
     apiBase === currentApiBase() &&
     generation === currentSessionGeneration() &&

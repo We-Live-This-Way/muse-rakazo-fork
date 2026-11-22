@@ -13,6 +13,7 @@ vi.mock("../notifications/live-notifications", () => ({
   resumeLiveNotifications: vi.fn(async () => undefined),
   stopLiveNotifications: vi.fn(async () => undefined),
 }));
+vi.mock("../notifications/push", () => ({ registerPushToken: vi.fn(async () => undefined) }));
 vi.mock("../api/network-cache", () => ({ clearNetworkCache: vi.fn() }));
 // The real call module's native-backed imports, stubbed so it can load beside the real API.
 vi.mock("expo-file-system", () => ({

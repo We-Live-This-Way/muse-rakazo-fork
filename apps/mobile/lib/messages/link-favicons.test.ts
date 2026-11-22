@@ -17,6 +17,7 @@ vi.mock("../notifications/live-notifications.js", () => ({
   resumeLiveNotifications: vi.fn(async () => undefined),
   stopLiveNotifications: vi.fn(async () => undefined),
 }));
+vi.mock("../notifications/push.js", () => ({ registerPushToken: vi.fn(async () => undefined) }));
 vi.mock("../api/network-cache.js", () => ({ clearNetworkCache: vi.fn() }));
 
 describe("link favicons on mobile", () => {

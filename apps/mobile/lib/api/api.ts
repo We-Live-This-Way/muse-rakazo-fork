@@ -25,7 +25,6 @@ import {
 import { resumeLiveNotifications } from "../notifications/live-notifications";
 import { reportMobileError } from "../platform/monitoring";
 import { promptAiConsent, promptPageRevisionConsent } from "../settings/ai-consent";
-import { clearUnsentSends } from "../thread/send/thread-feedback";
 import type { EndpointResult } from "./endpoint";
 import { defaultApiBase, normalizeApiBase } from "./endpoint";
 import { fetchServer } from "./server-headers";
@@ -56,7 +55,8 @@ export function subscribeApiBase(listener: () => void): () => void {
   };
 }
 export function setCachedApiBase(url: string): void {
-  if (cachedApiBase !== undefined && cachedApiBase !== url) clearUnsentSends();
+  // Switching servers parks the unsent queue with the server it belongs to; only a sign-out
+  // or sign-in clears it (via the session change), so a switch back can still send it.
   cachedApiBase = url;
   for (const listener of apiBaseListeners) listener();
 }
@@ -345,7 +345,7 @@ const deliveringSignOuts = new Map<string, Promise<void>>();
 let pendingSignOutWrites: Promise<unknown> = Promise.resolve();
 /** Endpoint changes in flight; reconcile leaves a switch's records alone while any runs. */
 let endpointChanges = 0;
-/** True from before a server switch clears the session until the new server is in place. */
+/** True from before a server switch parks the session until the new server is in place. */
 export function endpointChangeInProgress(): boolean {
   return endpointChanges > 0;
 }
@@ -446,20 +446,10 @@ export async function removePendingSignOut(record: PendingSignOut): Promise<void
     return kept.length === records.length ? undefined : kept;
   });
 }
-/** Marks a switch's provisional record deliverable, once the switch has committed. */
-export async function promotePendingSignOut(record: PendingSignOut): Promise<void> {
-  await updatePendingSignOuts((records) => {
-    let promoted = false;
-    const kept = records.map((existing) => {
-      if (!existing.provisional || !samePendingSignOut(existing, record)) return existing;
-      promoted = true;
-      const { provisional, ...committed } = existing;
-      return committed;
-    });
-    return promoted ? kept : undefined;
-  });
-}
 /**
+ * compat-shim(after v1.0.19): the fork no longer writes provisional records on switch, so this
+ * only resolves ones an official 1.0.18 install left behind. Remove once the fork has shipped
+ * past that upgrade window.
  * Resolves records a dying server switch left behind. A provisional record whose session is still
  * the active one on its server belongs to a switch that never completed, and the session it would
  * revoke is still in use; every other provisional record is promoted for delivery. Everything is

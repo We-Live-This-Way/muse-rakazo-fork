@@ -1,10 +1,9 @@
 {
   "expo": {
     "name": "Rakazo",
-    "slug": "rakazo",
-    "owner": "inbox-zero",
+    "slug": "rakazo-fork",
     "scheme": "rakazo",
-    "version": "1.0.18",
+    "version": "1.0.19",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
@@ -99,6 +98,7 @@
       "./plugins/with-worklets-headers",
       "./plugins/with-lan-cleartext",
       "./plugins/with-android-no-gwp-asan",
+      "./plugins/with-sdk-36",
       "./plugins/with-agent-notifications",
       "./plugins/with-app-intents",
       "./plugins/with-apple-watch",
@@ -133,8 +133,8 @@
       }
     },
     "android": {
-      "package": "com.rakazo.app",
-      "versionCode": 10,
+      "package": "com.welivethisway.rakazo",
+      "versionCode": 11,
       "softwareKeyboardLayoutMode": "resize",
       "icon": "./assets/icon.png",
       "adaptiveIcon": {
@@ -150,7 +150,6 @@
       "router": {},
       "supportsRTL": true,
       "eas": {
-        "projectId": "07f7eb04-45e3-47fe-9374-99a2f991131e",
         "build": {
           "experimental": {
             "ios": {
@@ -187,7 +186,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/07f7eb04-45e3-47fe-9374-99a2f991131e"
+      "enabled": false
     }
   }
 }

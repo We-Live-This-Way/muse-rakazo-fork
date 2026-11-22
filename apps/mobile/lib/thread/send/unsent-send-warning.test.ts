@@ -53,28 +53,29 @@ it("asks when the persisted queue could not be restored", async () => {
 it.each([
   ["sign-out", "Signing out deletes unsent messages.", "Sign out anyway"] as const,
   ["sign-in", "Signing in deletes unsent messages.", "Sign in anyway"] as const,
-  ["server-switch", "Switching servers deletes unsent messages.", "Switch anyway"] as const,
-])(
-  "asks before %s clears the queue and follows the chosen button",
-  async (kind, message, confirm) => {
-    vi.mocked(hasUnsentSends).mockReturnValue(true);
-    const pending = confirmUnsentSendLoss(kind);
-    await vi.waitFor(() => expect(Alert.alert).toHaveBeenCalledOnce());
-    const [title, body, buttons] = vi.mocked(Alert.alert).mock.calls[0]!;
-    const confirmButtons = buttons!;
-    expect(title).toBe("Unsent messages");
-    expect(body).toBe(message);
-    expect(confirmButtons[0]!.text).toBe("Cancel");
-    expect(confirmButtons[0]!.style).toBe("cancel");
-    expect(confirmButtons[1]!.text).toBe(confirm);
-    expect(confirmButtons[1]!.style).toBe("destructive");
+  [
+    "server-switch",
+    "Switching servers leaves unsent messages waiting for the previous server.",
+    "Switch anyway",
+  ] as const,
+])("asks before %s and follows the chosen button", async (kind, message, confirm) => {
+  vi.mocked(hasUnsentSends).mockReturnValue(true);
+  const pending = confirmUnsentSendLoss(kind);
+  await vi.waitFor(() => expect(Alert.alert).toHaveBeenCalledOnce());
+  const [title, body, buttons] = vi.mocked(Alert.alert).mock.calls[0]!;
+  const confirmButtons = buttons!;
+  expect(title).toBe("Unsent messages");
+  expect(body).toBe(message);
+  expect(confirmButtons[0]!.text).toBe("Cancel");
+  expect(confirmButtons[0]!.style).toBe("cancel");
+  expect(confirmButtons[1]!.text).toBe(confirm);
+  expect(confirmButtons[1]!.style).toBe("destructive");
 
-    confirmButtons[0]!.onPress?.();
-    await expect(pending).resolves.toBe(false);
+  confirmButtons[0]!.onPress?.();
+  await expect(pending).resolves.toBe(false);
 
-    const confirmed = confirmUnsentSendLoss(kind);
-    await vi.waitFor(() => expect(Alert.alert).toHaveBeenCalledTimes(2));
-    vi.mocked(Alert.alert).mock.calls[1]![2]![1]!.onPress?.();
-    await expect(confirmed).resolves.toBe(true);
-  },
-);
+  const confirmed = confirmUnsentSendLoss(kind);
+  await vi.waitFor(() => expect(Alert.alert).toHaveBeenCalledTimes(2));
+  vi.mocked(Alert.alert).mock.calls[1]![2]![1]!.onPress?.();
+  await expect(confirmed).resolves.toBe(true);
+});

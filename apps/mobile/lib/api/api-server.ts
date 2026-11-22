@@ -1,21 +1,19 @@
 import { t } from "@lingui/core/macro";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as SecureStore from "expo-secure-store";
 import { resumeLiveNotifications } from "../notifications/live-notifications";
-import type { PendingSignOut } from "./api";
+import { registerPushToken } from "../notifications/push";
 import {
   clearStoredValue,
   currentApiBase,
   currentSpaceSelectionGeneration,
   flushPendingSignOut,
   nextSpaceSelectionRequest,
-  promotePendingSignOut,
   queueEndpointChange,
   rawSelectedSpaceId,
-  removePendingSignOut,
   resumeSelectedSpaceNotifications,
   SPACE_KEY,
   SPACE_ROLLBACK_KEY,
-  savePendingSignOut,
   selectedSpaceId,
   setCachedApiBase,
   setSelectedSpace,
@@ -28,16 +26,63 @@ import { loadSavedServers, recordSavedServer } from "./saved-servers";
 import { API_BASE_STORAGE_KEY as ENDPOINT_KEY } from "./server-config";
 import { loadServerHeaders, saveServerHeaders, serverHeaders } from "./server-headers";
 import {
-  clearSessionToken,
   currentSessionGeneration,
-  restoreSessionToken,
+  ensureLegacySessionMigrated,
+  noteSessionServerChange,
   sessionSaveInProgress,
+  setSessionServer,
   snapshotSessionToken,
   snapshotStoredSessionToken,
+  snapshotStoredSessionTokenFor,
 } from "./session";
 
 /** The Space last used in each organization on this device, by organization id. */
 const ORGANIZATION_SPACES_KEY = "rakazo.org_spaces";
+/** The Space last used on each server, by origin. The live `SPACE_KEY` slot is what the app reads. */
+const SERVER_SPACES_KEY = "rakazo.server_spaces";
+
+/** The parked Spaces, or null when the stored map could not be read; never throws. */
+async function loadServerSpaces(): Promise<Record<string, string> | null> {
+  try {
+    const parsed: unknown = JSON.parse((await SecureStore.getItemAsync(SERVER_SPACES_KEY)) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.fromEntries(
+          Object.entries(parsed).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : {};
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Applies one change to the parked Spaces. False when the map could not be read or written, in
+ * which case nothing is written: a damaged map must never be replaced with an empty one.
+ */
+async function updateServerSpaces(
+  update: (spaces: Record<string, string>) => void,
+): Promise<boolean> {
+  const spaces = await loadServerSpaces();
+  if (!spaces) return false;
+  update(spaces);
+  return writeStoredValue(SERVER_SPACES_KEY, JSON.stringify(spaces));
+}
+
+/** Remembers a Space for its server. Best-effort: a map failure never fails the selection. */
+async function rememberServerSpace(apiBase: string, spaceId: string): Promise<void> {
+  await updateServerSpaces((spaces) => {
+    spaces[apiBase] = spaceId;
+  });
+}
+
+/** Forgets a server's parked Space. Best-effort, like the remember. */
+async function forgetServerSpace(apiBase: string): Promise<void> {
+  await updateServerSpaces((spaces) => {
+    delete spaces[apiBase];
+  });
+}
 const confirmedSpaceSwitchListeners = new Set<() => void>();
 /** Fires when a selection change to another Space is confirmed durable; a
  * rollback after a failed switch, or selecting the same Space again, does not. */
@@ -66,9 +111,17 @@ export async function loadApiBase() {
   await loadServerHeaders(apiBase);
   await loadSavedServers();
   setCachedApiBase(apiBase);
+  setSessionServer(apiBase);
+  await ensureLegacySessionMigrated();
   try {
     const storedSpace = (await SecureStore.getItemAsync(SPACE_KEY)) ?? "";
-    setSelectedSpace(storedSpace);
+    const spaces = await loadServerSpaces();
+    // The map wins for the server being opened: a crash mid-switch can leave `SPACE_KEY`
+    // holding the old server's Space. The resolved selection is parked for the next switch.
+    const resolvedSpace = spaces?.[apiBase] ?? storedSpace;
+    setSelectedSpace(resolvedSpace);
+    if (resolvedSpace !== storedSpace) await writeStoredValue(SPACE_KEY, resolvedSpace);
+    if (resolvedSpace) await rememberServerSpace(apiBase, resolvedSpace);
     // A deletion fallback must override the now-invalid saved Space even when
     // the device failed to replace that value before the previous process exited.
     await recoverSpaceRollback(apiBase);
@@ -117,6 +170,11 @@ export async function selectSpace(id: string) {
     }
     return false;
   }
+  // Park the live selection for this server, so switching back restores it. A map failure
+  // never fails the selection; the live slot already holds it.
+  const liveSpaceId = rawSelectedSpaceId();
+  if (liveSpaceId) await rememberServerSpace(currentApiBase(), liveSpaceId);
+  else await forgetServerSpace(currentApiBase());
   // Playback belongs to the conversation being left; the listener in voice.ts
   // stops it once a switch to another Space is confirmed. A fallback that
   // failed to persist left its origin pending; this confirmed switch consumes
@@ -154,6 +212,7 @@ export async function adoptDeletedSpaceFallback(id: string): Promise<boolean> {
     // SPACE_KEY is authoritative; drop a rollback we may have written only to
     // overwrite a stale record (best-effort).
     await clearStoredValue(SPACE_ROLLBACK_KEY);
+    await rememberServerSpace(currentApiBase(), id);
     if ((pendingFallbackSwitchFrom ?? previousSpaceId) !== id) noteConfirmedSpaceSwitch();
     pendingFallbackSwitchFrom = null;
     await resumeSelectedSpaceNotifications(id, claimGeneration);
@@ -168,6 +227,7 @@ export async function adoptDeletedSpaceFallback(id: string): Promise<boolean> {
   // rollback remains to override it after restart.
   const durable =
     recoverySaved || (staleSelectionCleared && (await clearStoredValue(SPACE_ROLLBACK_KEY)));
+  if (durable) await rememberServerSpace(currentApiBase(), id);
   if (durable && (pendingFallbackSwitchFrom ?? previousSpaceId) !== id) {
     noteConfirmedSpaceSwitch();
   }
@@ -204,10 +264,16 @@ export async function rememberOrganizationSpace(
     JSON.stringify({ ...spaces, [organizationId]: spaceId }),
   );
 }
+/**
+ * Clears the current server's Space state only. Other servers keep their parked Space, and
+ * their sessions are untouched. The per-server map entry is a hint, not auth, so a failed map
+ * write never fails the clear.
+ */
 export async function clearSpace(): Promise<boolean> {
   const organizationsCleared = await clearStoredValue(ORGANIZATION_SPACES_KEY);
   const spaceCleared = await clearStoredValue(SPACE_KEY);
   const rollbackCleared = await clearStoredValue(SPACE_ROLLBACK_KEY);
+  await forgetServerSpace(currentApiBase());
   if (!organizationsCleared || !spaceCleared || !rollbackCleared) return false;
   setSelectedSpace("");
   return true;
@@ -222,160 +288,169 @@ async function snapshotSpace(): Promise<{ ok: true; value: string } | { ok: fals
 }
 /**
  * Hangs up an active call while its session can still authorize the hang-up. Set by the call
- * module; a server switch runs it before it discards the old server's session, which would
+ * module; a server switch runs it before it parks the old server's session, which would
  * otherwise leave the old server holding an answered call with no marker or wrap-up.
  */
-let hangUpBeforeCredentialsCleared: (() => Promise<void>) | undefined;
-/** Registers (or clears) the hang-up that runs before an endpoint change clears credentials. */
+let hangUpBeforeEndpointChange: (() => Promise<void>) | undefined;
+/** Registers (or clears) the hang-up that runs before an endpoint change parks credentials. */
 export function configureSessionEndHangUp(hangUp: (() => Promise<void>) | undefined): void {
-  hangUpBeforeCredentialsCleared = hangUp;
+  hangUpBeforeEndpointChange = hangUp;
 }
-type ClearedCredentials = {
+type ParkedCredentials = {
+  previousApiBase: string;
   previousToken: string;
   previousSpace: string;
-  /** The revocation owed to the previous server, recorded before its credentials are discarded. */
-  pendingSignOut: PendingSignOut | undefined;
+  /** The target server's parked session, "" when it has none yet. */
+  targetToken: string;
+  /** The target server's remembered Space, "" when it has none. */
+  targetSpace: string;
+  /** The Space selection generation when parking started; a newer selection bumps it. */
+  spaceGeneration: number;
 };
+
 /**
- * Clears session + space for an endpoint change. Restores both if either wipe fails. The session it
- * clears is the one it records for revocation: a sign-in during the hang-up is read here, and any
- * session change after that read stops the switch before it clears anything.
+ * Parks the current server's session in place: nothing is cleared and no revocation is recorded.
+ * The old token stays in its per-origin key, so a failed switch only has to flip the active
+ * server back. Only a real sign-out revokes a session.
  */
-async function clearCredentialsForEndpointChange(
+async function parkCredentialsForEndpointChange(
   previous: string,
-  previousHeaders: Record<string, string>,
-): Promise<({ ok: true } & ClearedCredentials) | { ok: false; result: EndpointResult }> {
-  // The old server's session authorizes the call's hang-up; send it while it still exists.
-  await hangUpBeforeCredentialsCleared?.().catch(() => undefined);
+  target: string,
+): Promise<({ ok: true } & ParkedCredentials) | { ok: false; result: EndpointResult }> {
+  // The old server's session authorizes the call's hang-up; send it while it is still the active one.
+  await bestEffort("hang up before switching servers", hangUpBeforeEndpointChange?.());
+  // A selection that lands after this point owns the live slot; the rollback and the commit
+  // must not overwrite it. A selection that was never loaded yet does not bump this.
+  const spaceGeneration = currentSpaceSelectionGeneration();
   const generation = currentSessionGeneration();
-  // A save still running reads as no session; its token may land before the clear.
+  // A save still running reads as no session; its token may land before the switch.
   const previousToken = sessionSaveInProgress()
     ? ({ ok: false } as const)
     : await snapshotSessionToken();
   // A failed save or wipe can leave a token stored that reads as no session. A restart would send
-  // it again, so the switch revokes it too, but restores only the session in use.
-  const revokedToken =
+  // it again, so it counts as the parked session too; it is never deleted here.
+  const storedToken =
     previousToken.ok && !previousToken.value ? await snapshotStoredSessionToken() : previousToken;
-  // An unreadable session is not an empty one: clearing now could strand a live session
-  // with no record to revoke it, so the switch stops before touching anything.
-  if (!previousToken.ok || !revokedToken.ok) {
+  // An unreadable session is not an empty one: do not switch blind.
+  if (!previousToken.ok || !storedToken.ok) {
     return {
       ok: false,
       result: { ok: false, error: t`Could not save the previous server session` },
     };
   }
-  let pendingSignOut: PendingSignOut | undefined;
-  if (revokedToken.value) {
-    // Recorded before the old credentials are discarded, so a process kill cannot lose both —
-    // but provisionally: a retry must not revoke a session a rolled-back switch still uses.
-    pendingSignOut = {
-      apiBase: previous,
-      token: revokedToken.value,
-      headers: previousHeaders,
-      recordedAt: Date.now(),
-      provisional: true,
-    };
-    if (!(await savePendingSignOut(pendingSignOut))) {
-      // Without the record the old server keeps its session, so the switch cannot proceed.
-      return {
-        ok: false,
-        result: { ok: false, error: t`Could not save the previous server session` },
-      };
-    }
-  }
-  // `restoredToken` is the session the device still has; until the clear, that is the recorded one.
-  const failed = async (restoredToken = revokedToken.value) => {
-    await settleRolledBackSignOut(pendingSignOut, restoredToken);
-    return {
-      ok: false as const,
-      result: { ok: false as const, error: t`Could not clear the previous server session` },
-    };
+  const failed = {
+    ok: false as const,
+    result: { ok: false as const, error: t`Could not clear the previous server session` },
   };
-  // Captured before the read, so a selection made during it cannot pass as the one read.
-  const spaceGeneration = currentSpaceSelectionGeneration();
   const previousSpace = await snapshotSpace();
-  if (!previousSpace.ok) return failed();
+  if (!previousSpace.ok) return failed;
+  // Park the previous Space in the per-server map, so a stored `SPACE_KEY` from an older
+  // build cannot strand it when the switch leaves.
+  if (previousSpace.value) await rememberServerSpace(previous, previousSpace.value);
   const rollbackReady = previousSpace.value
     ? await saveSpaceRollback(previousSpace.value)
     : await clearStoredValue(SPACE_ROLLBACK_KEY);
-  if (!rollbackReady) return failed();
-  // Checked in the same tick as the clear: a session saved after the read has no record.
+  if (!rollbackReady) return failed;
+  // Checked in the same tick as the snapshots: a session saved after the read stops the switch
+  // before anything moves. The rollback record written above is dropped, so a later launch does
+  // not restore a selection the new session already replaced.
   if (generation !== currentSessionGeneration()) {
-    // An earlier failed switch may have left the rollback as the selection's only stored copy.
-    let kept = true;
-    if (previousSpace.value && currentSpaceSelectionGeneration() === spaceGeneration) {
-      kept = await writeStoredValue(SPACE_KEY, previousSpace.value);
-      // A selection made during a write may have landed first; store the live one again until a
-      // write completes with no selection made during it.
-      let written = spaceGeneration;
-      while (currentSpaceSelectionGeneration() !== written) {
-        written = currentSpaceSelectionGeneration();
-        kept = rawSelectedSpaceId()
-          ? await writeStoredValue(SPACE_KEY, rawSelectedSpaceId())
-          : await clearStoredValue(SPACE_KEY);
-      }
-    }
-    if (kept) await clearStoredValue(SPACE_ROLLBACK_KEY);
-    return failed();
+    await clearStoredValue(SPACE_ROLLBACK_KEY);
+    return failed;
   }
-  const sessionCleared = await clearSessionToken();
-  setSelectedSpace("");
-  const spaceCleared = await clearStoredValue(SPACE_KEY);
-  // The clear is the only session change allowed. A sign-in during it saved a session for the old
-  // server: the switch must not carry it to the new one, and a restore would overwrite it. The
-  // cleared session is gone from the device, so its record stays.
-  if (currentSessionGeneration() !== generation + 1) return failed("");
-  if (sessionCleared && spaceCleared) {
+  // The target's parked session is read without making it active.
+  const targetToken = await snapshotStoredSessionTokenFor(target);
+  if (!targetToken.ok) {
     return {
-      ok: true,
-      previousToken: previousToken.value,
-      previousSpace: previousSpace.value,
-      pendingSignOut,
+      ok: false,
+      result: { ok: false, error: t`Could not save the previous server session` },
     };
   }
+  const spaces = await loadServerSpaces();
+  return {
+    ok: true,
+    previousApiBase: previous,
+    previousToken: storedToken.value,
+    previousSpace: previousSpace.value,
+    targetToken: targetToken.value,
+    targetSpace: spaces?.[target] ?? "",
+    spaceGeneration,
+  };
+}
 
-  return failed(await restoreCredentials(previousToken.value, previousSpace.value));
-}
 /**
- * Settles a rolled-back switch's revocation record. The rollback restores only the session in use,
- * and only a restore that stored it removes the record. Any other record stays provisional: the
- * next retry delivers it, unless that token is the active session again.
+ * Rolls back an endpoint change: nothing was cleared before the commit point, so this only flips
+ * the pointers back to the previous server and resumes its notifications. The rollback record
+ * written while parking is dropped; the endpoint-bound record restores the selection after a
+ * restart if the Space write below cannot land.
  */
-async function settleRolledBackSignOut(
-  record: PendingSignOut | undefined,
-  restoredToken: string,
-): Promise<void> {
-  if (record && record.token === restoredToken) await removePendingSignOut(record);
-}
-/** Rolls back an endpoint change that cleared credentials, settling its revocation record. */
-async function rollBackEndpointChange(cleared: ClearedCredentials | undefined): Promise<void> {
-  if (!cleared) return;
-  const restoredToken = await restoreCredentials(cleared.previousToken, cleared.previousSpace);
-  await settleRolledBackSignOut(cleared.pendingSignOut, restoredToken);
-}
-/** Returns the restored token, or "" when it is kept only in memory and a restart would lose it. */
-async function restoreCredentials(previousToken: string, previousSpace: string): Promise<string> {
-  let persisted = !previousToken || (await restoreSessionToken(previousToken));
-  if (!persisted) {
-    // A clear that failed too may have left the token stored, where a restart still finds it.
-    const stored = await snapshotStoredSessionToken();
-    persisted = stored.ok && stored.value === previousToken;
-  }
-  if (previousSpace) {
-    setSelectedSpace(previousSpace);
+async function rollBackEndpointChange(parked: ParkedCredentials | undefined): Promise<void> {
+  if (!parked) return;
+  // A newer selection that landed during the switch owns the live slot now; the rollback must
+  // not clobber it. The rollback record is dropped either way: it describes the abandoned switch.
+  const ownsLiveSelection = currentSpaceSelectionGeneration() === parked.spaceGeneration;
+  let reassertedGeneration = -1;
+  if (ownsLiveSelection) {
+    setSelectedSpace(parked.previousSpace);
+    reassertedGeneration = currentSpaceSelectionGeneration();
     try {
-      await SecureStore.setItemAsync(SPACE_KEY, previousSpace);
+      await SecureStore.setItemAsync(SPACE_KEY, parked.previousSpace);
       await clearStoredValue(SPACE_ROLLBACK_KEY);
     } catch {
       // The endpoint-bound rollback record restores this selection after restart.
     }
+  } else {
+    await clearStoredValue(SPACE_ROLLBACK_KEY);
   }
-  if (previousToken) {
-    await resumeLiveNotifications(currentApiBase(), previousToken, previousSpace).catch(
-      () => undefined,
+  if (
+    parked.previousToken &&
+    ownsLiveSelection &&
+    currentSpaceSelectionGeneration() === reassertedGeneration
+  ) {
+    await bestEffort(
+      "resume live notifications on the previous server",
+      resumeLiveNotifications(parked.previousApiBase, parked.previousToken, parked.previousSpace),
     );
   }
-  return persisted ? previousToken : "";
+}
+
+/** Commits a switch: flips the cached server, the session server and the generation, then restores the target's Space. */
+async function commitEndpointChange(
+  target: string,
+  parked: ParkedCredentials | undefined,
+): Promise<void> {
+  setCachedApiBase(target);
+  setSessionServer(target);
+  // Bumps the generation, so in-flight old-server requests are discarded and the inbox remounts
+  // and re-reads the session for the new server; with no parked token it shows sign-in there.
+  noteSessionServerChange();
+  if (parked) {
+    // A newer selection that landed during the switch owns the live slot; the target's parked
+    // Space must not overwrite it.
+    if (currentSpaceSelectionGeneration() === parked.spaceGeneration) {
+      setSelectedSpace(parked.targetSpace);
+      await writeStoredValue(SPACE_KEY, parked.targetSpace);
+      if (parked.targetSpace) await rememberServerSpace(target, parked.targetSpace);
+    }
+  }
+  await clearStoredValue(SPACE_ROLLBACK_KEY);
+}
+
+/** Best-effort, after a switch commits: point live notifications and push at the new server. */
+async function resumeAfterSwitch(
+  target: string,
+  parked: ParkedCredentials | undefined,
+): Promise<void> {
+  if (!parked) return;
+  // With no parked session there is nothing to subscribe with; resumeLiveNotifications
+  // returns false for an empty token anyway, so the call is skipped, not attempted.
+  if (parked.targetToken) {
+    await bestEffort(
+      "resume live notifications on the new server",
+      resumeLiveNotifications(target, parked.targetToken, rawSelectedSpaceId()),
+    );
+  }
+  await bestEffort("register the push token on the new server", registerPushToken());
 }
 async function saveSpaceRollback(spaceId: string): Promise<boolean> {
   return writeStoredValue(
@@ -420,28 +495,26 @@ export async function saveApiBase(
   if (parsed.url === defaultApiBase() && Object.keys(headers).length === 0) return resetApiBase();
   return queueEndpointChange(parsed.url, async (previous, switching) => {
     const previousHeaders = serverHeaders(previous);
-    let cleared: ClearedCredentials | undefined;
+    let parked: ParkedCredentials | undefined;
     if (switching) {
-      const result = await clearCredentialsForEndpointChange(previous, previousHeaders);
+      const result = await parkCredentialsForEndpointChange(previous, parsed.url);
       if (!result.ok) return result.result;
-      cleared = result;
+      parked = result;
     }
     if (!(await saveServerHeaders(parsed.url, headers))) {
-      await rollBackEndpointChange(cleared);
+      await rollBackEndpointChange(parked);
       return { ok: false, error: t`Could not save the server URL` };
     }
     try {
       await SecureStore.setItemAsync(ENDPOINT_KEY, parsed.url);
     } catch {
       await saveServerHeaders(previous, previousHeaders);
-      await rollBackEndpointChange(cleared);
+      await rollBackEndpointChange(parked);
       return { ok: false, error: t`Could not save the server URL` };
     }
-    setCachedApiBase(parsed.url);
-    await clearStoredValue(SPACE_ROLLBACK_KEY);
-    if (cleared?.pendingSignOut) await promotePendingSignOut(cleared.pendingSignOut);
-    if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    await commitEndpointChange(parsed.url, parked);
     await rememberServers(switching ? previous : undefined, previousHeaders, parsed.url, headers);
+    await resumeAfterSwitch(parsed.url, parked);
     return parsed;
   });
 }
@@ -449,37 +522,35 @@ export async function resetApiBase(): Promise<EndpointResult> {
   const url = defaultApiBase();
   return queueEndpointChange(url, async (previous, switching) => {
     const previousHeaders = serverHeaders(previous);
-    let cleared: ClearedCredentials | undefined;
+    let parked: ParkedCredentials | undefined;
     if (switching) {
-      const result = await clearCredentialsForEndpointChange(previous, previousHeaders);
+      const result = await parkCredentialsForEndpointChange(previous, url);
       if (!result.ok) return result.result;
-      cleared = result;
+      parked = result;
     }
     try {
       await SecureStore.deleteItemAsync(ENDPOINT_KEY);
     } catch {
-      if (cleared) {
-        await rollBackEndpointChange(cleared);
-        return { ok: false, error: t`Could not clear the custom server URL` };
-      }
+      // The endpoint value is unchanged, so the old server is still current and its session
+      // is intact. The switch simply fails; nothing is revoked.
+      await rollBackEndpointChange(parked);
+      return { ok: false, error: t`Could not clear the custom server URL` };
     }
     if (!(await saveServerHeaders(url, {}))) {
       if (await writeStoredValue(ENDPOINT_KEY, previous)) {
-        await rollBackEndpointChange(cleared);
+        await rollBackEndpointChange(parked);
       } else {
-        // Without the old server URL stored again, the next launch opens the default server, so
-        // this launch follows it too: the old session is not restored, its record stays for the
-        // next retry to revoke, and a later sign-in's token is never sent to another server.
-        setCachedApiBase(url);
-        if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+        // The old server URL could not be stored again, so the next launch opens the default
+        // server; this launch follows it too, with the default server's parked session.
+        await commitEndpointChange(url, parked);
+        if (switching) await rememberServers(previous, previousHeaders);
+        await resumeAfterSwitch(url, parked);
       }
       return { ok: false, error: t`Could not clear the custom server URL` };
     }
-    setCachedApiBase(url);
-    await clearStoredValue(SPACE_ROLLBACK_KEY);
-    if (cleared?.pendingSignOut) await promotePendingSignOut(cleared.pendingSignOut);
-    if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    await commitEndpointChange(url, parked);
     if (switching) await rememberServers(previous, previousHeaders);
+    await resumeAfterSwitch(url, parked);
     return { ok: true, url };
   });
 }

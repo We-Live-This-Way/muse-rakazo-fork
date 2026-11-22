@@ -11,7 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { currentApiBase, setCachedApiBase, setSelectedSpace } from "../api/api";
 import { saveApiBase } from "../api/api-server";
 import { jsonResponse, mockSecureStore } from "../api/api-test-helpers";
-import { restoreSessionToken, saveSessionToken } from "../api/session";
+import {
+  restoreSessionToken,
+  saveSessionToken,
+  sessionKeyFor,
+  setSessionServer,
+} from "../api/session";
 import type { SaveSend } from "./query";
 import { useSave } from "./query";
 import type { SettingsTarget } from "./settings-target";
@@ -25,11 +30,12 @@ vi.mock("../notifications/live-notifications", () => ({
   resumeLiveNotifications: vi.fn(async () => undefined),
   stopLiveNotifications: vi.fn(async () => undefined),
 }));
+vi.mock("../notifications/push", () => ({ registerPushToken: vi.fn(async () => undefined) }));
 vi.mock("../api/network-cache", () => ({ clearNetworkCache: vi.fn() }));
 
 const OLD = "https://old.example.test";
 const NEW = "https://new.example.test";
-const SESSION_KEY = "rakazo.session_token";
+const SESSION_KEY = sessionKeyFor(OLD);
 const WRITE = "spaceSettings/setOverride";
 
 const onSaved = vi.fn();
@@ -60,6 +66,7 @@ beforeEach(async () => {
   mockSecureStore(store);
   originalBase = currentApiBase();
   setCachedApiBase(OLD);
+  setSessionServer(OLD);
   await restoreSessionToken("old-token");
   setSelectedSpace("space-old");
   requests = [];

@@ -57,3 +57,26 @@ it("persists a scope only after successful identity verification", async () => {
   await expect(verifiedScope()).rejects.toThrow("offline");
   expect(state.save).toHaveBeenCalledTimes(1);
 });
+
+it("re-verifies identity after a server switch and again on the way back", async () => {
+  const first = await verifiedScope();
+  expect(first.apiBase).toBe("https://api.example.test");
+  expect(state.rpc).toHaveBeenCalledTimes(1);
+
+  state.base = "https://b.example.test";
+  state.rpc.mockResolvedValue({ userId: "user-b", spaceId: "space-b" });
+  const second = await verifiedScope();
+  expect(second.apiBase).toBe("https://b.example.test");
+  expect(second.userId).toBe("user-b");
+  expect(isVerifiedScopeCurrent(first)).toBe(false);
+  expect(state.rpc).toHaveBeenCalledTimes(2);
+  expect(state.save).toHaveBeenCalledWith(state.generation, second);
+
+  // The memo holds one server only, so returning needs A's identity again.
+  state.base = "https://api.example.test";
+  state.rpc.mockResolvedValue({ userId: "user-a", spaceId: "space-a" });
+  const third = await verifiedScope();
+  expect(third.apiBase).toBe("https://api.example.test");
+  expect(third.userId).toBe("user-a");
+  expect(state.rpc).toHaveBeenCalledTimes(3);
+});

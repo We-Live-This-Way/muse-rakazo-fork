@@ -13,8 +13,10 @@ import {
   SettingsSwitch,
   useStackedSettings,
 } from "../../components/settings/settings-group";
-import { currentApiBase, selectedSpaceId } from "../../lib/api/api";
+import { currentApiBase, selectedSpaceId, subscribeApiBase } from "../../lib/api/api";
+import { displayApiHost } from "../../lib/api/endpoint";
 import type { MobileMe } from "../../lib/api/mobile-types";
+import { savedServers } from "../../lib/api/saved-servers";
 import { loadSessionToken } from "../../lib/api/session";
 import { errorText } from "../../lib/api/user-error";
 import {
@@ -61,6 +63,7 @@ import { createQueuedSave } from "../../lib/query/queued-save";
 import { useScreenQuery } from "../../lib/query/screen-query";
 import { ACCOUNT_SETTINGS } from "../../lib/query/settings-target";
 import { createSettingsPageStyles } from "../../lib/settings/settings-page-styles";
+import { openFromSettingsSheet } from "../../lib/settings/settings-sheet";
 
 let hapticsSaveVersion = 0;
 
@@ -84,6 +87,9 @@ export default function General() {
     onFailed: () => Alert.alert(t`Couldn't update bot style`),
   });
   const appearance = getCachedAppearancePreference();
+  const apiBase = useSyncExternalStore(subscribeApiBase, currentApiBase, currentApiBase);
+  const serverValue =
+    savedServers().find((entry) => entry.apiBase === apiBase)?.label ?? displayApiHost(apiBase);
   const streamReplies = useSyncExternalStore(
     subscribeResponseStreaming,
     getCachedResponseStreamingEnabled,
@@ -331,6 +337,15 @@ export default function General() {
             chevron="right"
             onPress={() => router.push("/ai-data-sharing")}
             title={t`AI data sharing`}
+          />
+          <SettingsRow
+            accessibilityRole="button"
+            accessibilityLabel={t`Server`}
+            accessibilityValue={{ text: serverValue }}
+            chevron="right"
+            onPress={() => openFromSettingsSheet(router, "/server")}
+            title={t`Server`}
+            value={serverValue}
           />
         </SettingsGroup>
       </ScrollView>

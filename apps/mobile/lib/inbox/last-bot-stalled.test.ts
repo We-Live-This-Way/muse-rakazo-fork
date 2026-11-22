@@ -1,6 +1,7 @@
 import { deferred } from "@rakazo/core/test-async";
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultApiBase } from "../api/endpoint";
 import type * as Session from "../api/session";
 import type * as LastBot from "./last-bot";
 
@@ -88,7 +89,7 @@ describe("stalled last-bot storage", () => {
       const signedOut = vi.fn();
       void session.clearSessionToken().then(signedOut);
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(saved.has("rakazo.session_token")).toBe(false);
+      expect(saved.has(session.sessionKeyFor(defaultApiBase()))).toBe(false);
       expect(signedOut).toHaveBeenCalledExactlyOnceWith(true);
 
       const signedIn = vi.fn();

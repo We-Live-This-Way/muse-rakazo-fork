@@ -93,8 +93,8 @@ export default function ServerScreen() {
         fail(probed.error);
         return;
       }
-      // Asked once the switch can happen. Only a different server clears the device; the same
-      // address saves without a switch.
+      // Asked once the switch can happen. Only a different server switches, and it parks the
+      // current session instead of clearing it; the same address saves without a switch.
       if (probed.url !== current && !(await confirmUnsentSendLoss("server-switch"))) return;
       if (!active.current) return;
       const saved = await saveApiBase(probed.url, headers);
@@ -219,14 +219,15 @@ export default function ServerScreen() {
                 <LongPressMenu
                   key={entry.apiBase}
                   colorScheme={colorScheme}
-                  title={displaySavedServer(entry.apiBase)}
+                  title={entry.label ?? displaySavedServer(entry.apiBase)}
                   actions={[{ id: "remove", title: t`Remove`, attributes: { destructive: true } }]}
                   onPressAction={() => void forget(entry.apiBase)}
                 >
                   {(onLongPress) => (
                     <SettingsRow
                       accessibilityRole="button"
-                      title={displaySavedServer(entry.apiBase)}
+                      title={entry.label ?? displaySavedServer(entry.apiBase)}
+                      value={entry.label ? displaySavedServer(entry.apiBase) : undefined}
                       disabled={pending}
                       dimmed={pending}
                       onPress={() => void save(entry)}
