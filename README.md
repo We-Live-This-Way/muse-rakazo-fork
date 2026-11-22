@@ -1,3 +1,5 @@
+> **Fork notice:** this is a fork of [elie222/rakazo](https://github.com/elie222/rakazo) with mobile server-switching changes built by Muse. See [FORK.md](FORK.md) for what changed. Licensed under Apache 2.0 like the original.
+
 # Rakazo
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md)
