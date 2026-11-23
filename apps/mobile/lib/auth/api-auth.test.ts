@@ -1072,6 +1072,7 @@ describe("mobile API sign-in and account", () => {
   it("does not send a password or bearer token to a persisted public HTTP server", async () => {
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
       if (key === "rakazo.api_base") return "http://app.example.test";
+      if (key === "rakazo.saved_servers_seeded") return "1";
       if (key === tokenKey()) return "session-token";
       return null;
     });
@@ -1512,6 +1513,7 @@ describe("mobile API sign-in and account", () => {
       recordedAt: Date.now(),
     };
     const store = new Map<string, string>([["rakazo.pending_sign_out", JSON.stringify([record])]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     let storeLocked = true;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
@@ -1963,6 +1965,7 @@ describe("mobile API sign-in and account", () => {
       [tokenKey(defaultApiBase()), "token-a"],
       ["rakazo.pending_sign_out", JSON.stringify([provisional("token-a")])],
     ]);
+    uncompleted.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(uncompleted);
     const noFetch = vi.fn<typeof globalThis.fetch>(async () => jsonResponse({}));
     vi.stubGlobal("fetch", noFetch);

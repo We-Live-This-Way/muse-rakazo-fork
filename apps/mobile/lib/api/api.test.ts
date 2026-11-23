@@ -73,6 +73,7 @@ describe("mobile API requests", () => {
       [TOKEN_KEY, "expired-token"],
       ["rakazo.space_id", "space-a"],
     ]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -95,6 +96,7 @@ describe("mobile API requests", () => {
 
   it.each(["session", "server"])("ignores an account 401 after the %s changes", async (change) => {
     const store = new Map<string, string>([[TOKEN_KEY, "old-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const originalBase = (await captureApiRequestContext(null)).apiBase;
@@ -161,6 +163,7 @@ describe("mobile API requests", () => {
     "rejects the session even with a %s account 401 body",
     async (body) => {
       const store = new Map<string, string>([[TOKEN_KEY, "expired-token"]]);
+      store.set("rakazo.saved_servers_seeded", "1");
       mockSecureStore(store);
       await loadApiBase();
       const rejected = vi.fn();
@@ -783,6 +786,7 @@ describe("mobile API requests", () => {
 
   it("keeps the Space selection when unauthorized is a session failure", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-support"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
       if (key === TOKEN_KEY) return "expired-token";
       return storage.get(key) ?? null;
@@ -812,6 +816,7 @@ describe("mobile API requests", () => {
 
   it("keeps a Space selected during unauthorized recovery when the retry succeeds", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-deleted"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -843,6 +848,7 @@ describe("mobile API requests", () => {
 
   it("keeps a Space selected during unauthorized recovery when the retry fails", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-deleted"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -874,6 +880,7 @@ describe("mobile API requests", () => {
 
   it("ignores a 401 from a request sent before the user switched Spaces", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-a"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -907,6 +914,7 @@ describe("mobile API requests", () => {
 
   it("ignores a stale 401 after switching away and back to the same Space", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-a"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -942,6 +950,7 @@ describe("mobile API requests", () => {
 
   it("clears a session the server rejects and reports it once", async () => {
     const store = new Map<string, string>([[TOKEN_KEY, "revoked-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -974,6 +983,7 @@ describe("mobile API requests", () => {
 
   it("keeps the unsent queue of a session the server rejects", async () => {
     const store = new Map<string, string>([[TOKEN_KEY, "revoked-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const clear = vi.fn();
@@ -1004,6 +1014,7 @@ describe("mobile API requests", () => {
       [TOKEN_KEY, "session-token"],
       ["rakazo.space_id", "space-removed"],
     ]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -1046,6 +1057,7 @@ describe("mobile API requests", () => {
     ],
   ])("keeps the session after %s", async (_failure, respond) => {
     const store = new Map<string, string>([[TOKEN_KEY, "session-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -1063,6 +1075,7 @@ describe("mobile API requests", () => {
 
   it("keeps the session a password change on this device is replacing", async () => {
     const store = new Map<string, string>([[TOKEN_KEY, "session-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -1096,6 +1109,7 @@ describe("mobile API requests", () => {
 
   it("keeps a newer session when a request from the old one is refused", async () => {
     const store = new Map<string, string>([[TOKEN_KEY, "old-token"]]);
+    store.set("rakazo.saved_servers_seeded", "1");
     mockSecureStore(store);
     await loadApiBase();
     const rejected = vi.fn();
@@ -1119,6 +1133,7 @@ describe("mobile API requests", () => {
 
   it("re-persists a Space selected while recovery cleanup is in flight", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-deleted"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     let injected = false;
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
@@ -1147,6 +1162,7 @@ describe("mobile API requests", () => {
 
   it("does not retry a mutating RPC against the default Space after Space auth failure", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-deleted"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -1174,6 +1190,7 @@ describe("mobile API requests", () => {
 
   it("keeps the Space selection when a mutating RPC unauthorized is a session failure", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-support"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
       if (key === TOKEN_KEY) return "expired-token";
       return storage.get(key) ?? null;

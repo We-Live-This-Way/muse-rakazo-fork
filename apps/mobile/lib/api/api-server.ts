@@ -22,7 +22,12 @@ import {
 } from "./api";
 import type { EndpointResult } from "./endpoint";
 import { defaultApiBase, normalizeApiBase } from "./endpoint";
-import { loadSavedServers, recordSavedServer } from "./saved-servers";
+import {
+  loadSavedServers,
+  MAUSHAUS_API_BASE,
+  recordSavedServer,
+  savedServersSeeded,
+} from "./saved-servers";
 import { API_BASE_STORAGE_KEY as ENDPOINT_KEY } from "./server-config";
 import { loadServerHeaders, saveServerHeaders, serverHeaders } from "./server-headers";
 import {
@@ -97,16 +102,26 @@ function noteConfirmedSpaceSwitch(): void {
 }
 export async function loadApiBase() {
   let apiBase = defaultApiBase();
+  let storedEndpoint = false;
   try {
     const stored = await SecureStore.getItemAsync(ENDPOINT_KEY);
     if (stored) {
       const parsed = normalizeApiBase(stored);
       if (parsed.ok) {
         apiBase = parsed.url;
+        storedEndpoint = true;
       }
     }
   } catch {
     // SecureStore is unavailable in some test / web hosts.
+  }
+  // First launch: no server was ever stored and the list was never seeded, so open the
+  // pre-filled Maushaus server and remember it. The loopback default is unreachable
+  // from a phone, and the Server screen shows whichever server is current. A device
+  // that launched before keeps its server, so a restart still restores it.
+  if (!storedEndpoint && !(await savedServersSeeded())) {
+    apiBase = MAUSHAUS_API_BASE;
+    await writeStoredValue(ENDPOINT_KEY, MAUSHAUS_API_BASE);
   }
   await loadServerHeaders(apiBase);
   await loadSavedServers();

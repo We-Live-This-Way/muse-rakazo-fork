@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultApiBase } from "./endpoint";
 import {
   loadSavedServers,
-  SEEDED_API_BASE,
+  MAUSHAUS_API_BASE,
   MAX_SAVED_SERVER_LABEL_LENGTH,
   MAX_SAVED_SERVERS,
   recordSavedServer,
@@ -36,9 +36,9 @@ beforeEach(async () => {
     store.delete(key);
   });
   await loadSavedServers();
-  // The first load seeds the home server; these tests start from an empty list. The seed marker stays
+  // The first load seeds Maushaus; these tests start from an empty list. The seed marker stays
   // written, so removing the entry does not resurrect it.
-  await removeSavedServer(SEEDED_API_BASE);
+  await removeSavedServer(MAUSHAUS_API_BASE);
 });
 
 describe("saved servers", () => {
@@ -198,7 +198,7 @@ describe("saved servers", () => {
     store.set(
       KEY,
       JSON.stringify([
-        { apiBase: ONE, headers: {}, label: "  Home server  " },
+        { apiBase: ONE, headers: {}, label: "  Maushaus  " },
         { apiBase: TWO, headers: {}, label: "   " },
         {
           apiBase: "https://long.example.test",

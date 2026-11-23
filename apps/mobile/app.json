@@ -3,7 +3,7 @@
     "name": "Rakazo",
     "slug": "rakazo-fork",
     "scheme": "rakazo",
-    "version": "1.0.19",
+    "version": "1.0.20",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
@@ -134,7 +134,7 @@
     },
     "android": {
       "package": "com.welivethisway.rakazo",
-      "versionCode": 11,
+      "versionCode": 12,
       "softwareKeyboardLayoutMode": "resize",
       "icon": "./assets/icon.png",
       "adaptiveIcon": {

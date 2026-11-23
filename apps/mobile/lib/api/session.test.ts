@@ -230,6 +230,26 @@ describe("per-server sessions", () => {
     await restoreSessionToken("");
   });
 
+  it("keeps session keys inside SecureStore's alphabet", () => {
+    for (const apiBase of [
+      "http://127.0.0.1:3100",
+      "https://rakazo.example.com",
+      "http://100.97.235.102:3100",
+      "https://second-server.example:8443",
+    ]) {
+      expect(sessionKeyFor(apiBase)).toMatch(/^[\w.-]+$/);
+    }
+  });
+
+  it("gives two servers different session keys", () => {
+    expect(sessionKeyFor("http://127.0.0.1:3100")).not.toBe(
+      sessionKeyFor("https://rakazo.example.com"),
+    );
+    expect(sessionKeyFor("https://one.example.test")).not.toBe(
+      sessionKeyFor("https://two.example.test"),
+    );
+  });
+
   it("keeps a different token per server under its own key", async () => {
     setSessionServer(ONE);
     await saveSessionToken("token-one");

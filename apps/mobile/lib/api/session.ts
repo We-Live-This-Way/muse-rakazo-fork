@@ -13,15 +13,32 @@ import { defaultApiBase } from "./endpoint";
 import { clearNetworkCache } from "./network-cache";
 
 /** One token per server, so switching servers parks the session instead of ending it. */
-const SESSION_KEY_PREFIX = "rakazo.session_token:";
+const SESSION_KEY_PREFIX = "rakazo.session_token.";
 /** The single-key era's token. Migration source only, never written again. */
 const LEGACY_SESSION_KEY = "rakazo.session_token";
 // Named for the screen that first kept it; renaming it would drop every saved identity.
 const VERIFIED_SCOPE_KEY = "rakazo.integrations-scope";
 
+/**
+ * SecureStore keys hold only letters, digits, `.`, `-` and `_`, so an origin is stored
+ * escaped: every character outside `[A-Za-z0-9_-]`, including `.` itself, becomes `.`
+ * plus its two hex digits. The escape is unambiguous, so two origins never share a key.
+ * A raw origin holds `:` and `/`, which the device rejects, so an unescaped key made
+ * every session read fail and every server switch report that the previous session
+ * could not be saved.
+ */
+function encodeSessionKeyOrigin(apiBase: string): string {
+  let encoded = "";
+  for (const char of apiBase) {
+    if (/[A-Za-z0-9_-]/.test(char)) encoded += char;
+    else encoded += `.${(char.codePointAt(0) ?? 0).toString(16).padStart(2, "0")}`;
+  }
+  return encoded;
+}
+
 /** The token key for one server. `apiBase` is a normalized origin, so two servers never share one. */
 export function sessionKeyFor(apiBase: string): string {
-  return `${SESSION_KEY_PREFIX}${apiBase}`;
+  return `${SESSION_KEY_PREFIX}${encodeSessionKeyOrigin(apiBase)}`;
 }
 
 /**

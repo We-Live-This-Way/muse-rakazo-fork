@@ -29,6 +29,7 @@ import {
   selectSpace,
 } from "./api-server.js";
 import { defaultApiBase } from "./endpoint.js";
+import { MAUSHAUS_API_BASE } from "./saved-servers.js";
 import {
   clearSessionToken,
   restoreSessionToken,
@@ -120,6 +121,21 @@ describe("mobile API server and Space selection", () => {
     vi.mocked(SecureStore.setItemAsync).mockReset();
     vi.mocked(SecureStore.deleteItemAsync).mockReset();
     await selectSpace("");
+  });
+
+  it("opens the seeded Maushaus server on a fresh install and switches with no previous session", async () => {
+    const store = new Map<string, string>();
+    mockSecureStore(store);
+    await loadApiBase();
+    expect(currentApiBase()).toBe(MAUSHAUS_API_BASE);
+    expect(store.get("rakazo.api_base")).toBe(MAUSHAUS_API_BASE);
+    // A relaunch still opens Maushaus: the first launch remembered it.
+    await loadApiBase();
+    expect(currentApiBase()).toBe(MAUSHAUS_API_BASE);
+
+    await expect(saveApiBase(TWO)).resolves.toEqual({ ok: true, url: TWO });
+    expect(currentApiBase()).toBe(TWO);
+    await resetApiBase();
   });
 
   it("a server switch leaves the previous server's token and Space stored", async () => {
@@ -1180,6 +1196,7 @@ describe("mobile API server and Space selection", () => {
 
   it("recovers a deleted-space fallback over a stale saved selection after restart", async () => {
     const storage = new Map<string, string>([["rakazo.space_id", "space-deleted"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -1250,6 +1267,7 @@ describe("mobile API server and Space selection", () => {
         JSON.stringify({ apiBase: "http://127.0.0.1:3100", spaceId: "space-personal" }),
       ],
     ]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);
@@ -1310,6 +1328,7 @@ describe("mobile API server and Space selection", () => {
       ["rakazo.space_id", "space-deleted"],
       ["rakazo.space_rollback", JSON.stringify({ apiBase, spaceId: "space-old" })],
     ]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       if (key === "rakazo.space_rollback") throw new Error("device locked");
@@ -1346,6 +1365,7 @@ describe("mobile API server and Space selection", () => {
       ["rakazo.space_id", "space-deleted"],
       ["rakazo.space_rollback", JSON.stringify({ apiBase, spaceId: "space-old" })],
     ]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async () => {
       throw new Error("device locked");
@@ -1504,6 +1524,7 @@ describe("mobile API server and Space selection", () => {
 
   it("does not restore the first selection after switching away and back", async () => {
     const storage = new Map<string, string>([[tokenKey(ONE), "fake-token"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     let releaseFirstA!: Deferred;
     let firstA = true;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
@@ -1537,6 +1558,7 @@ describe("mobile API server and Space selection", () => {
 
   it("does not restore an obsolete selection after its token read finishes", async () => {
     const storage = new Map<string, string>([[tokenKey(ONE), "fake-token"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     let releaseToken!: Deferred;
     let tokenReadHeld = false;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
@@ -1568,6 +1590,7 @@ describe("mobile API server and Space selection", () => {
 
   it("does not resume a deleted-space fallback after a newer Space is selected", async () => {
     const storage = new Map<string, string>([[tokenKey(ONE), "fake-token"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     let releaseToken!: Deferred;
     let tokenReadHeld = false;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
@@ -1599,6 +1622,7 @@ describe("mobile API server and Space selection", () => {
 
   it("resumes the fallback Space after failed auth recovery invalidates its pending resume", async () => {
     const storage = new Map<string, string>([[tokenKey(ONE), "fake-token"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     let releaseToken!: Deferred;
     let tokenReadHeld = false;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
@@ -1650,6 +1674,7 @@ describe("mobile API server and Space selection", () => {
 
   it("restores notifications for the previous selection when a newer persist fails", async () => {
     const storage = new Map<string, string>([[tokenKey(ONE), "fake-token"]]);
+    storage.set("rakazo.saved_servers_seeded", "1");
     let releaseA!: Deferred;
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
@@ -1755,11 +1780,14 @@ describe("mobile API server and Space selection", () => {
   });
 
   it("recovers the active space after rollback persistence fails", async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) =>
+      key === "rakazo.saved_servers_seeded" ? "1" : null,
+    );
     await loadApiBase();
     await selectSpace("space-support");
 
     const storage = new Map<string, string>();
+    storage.set("rakazo.saved_servers_seeded", "1");
     vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => storage.get(key) ?? null);
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
       storage.delete(key);

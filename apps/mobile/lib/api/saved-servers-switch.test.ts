@@ -8,8 +8,8 @@ import { loadApiBase, resetApiBase, saveApiBase } from "./api-server.js";
 import { defaultApiBase } from "./endpoint.js";
 import {
   loadSavedServers,
-  SEEDED_API_BASE,
-  SEEDED_LABEL,
+  MAUSHAUS_API_BASE,
+  MAUSHAUS_LABEL,
   removeSavedServer,
   savedServers,
 } from "./saved-servers.js";
@@ -51,9 +51,9 @@ beforeEach(async () => {
   await resetApiBase();
   store.clear();
   await loadSavedServers();
-  // The first load seeds the home server; the switch tests below start from an empty list. The seed
+  // The first load seeds Maushaus; the switch tests below start from an empty list. The seed
   // marker stays written, so removing the entry does not resurrect it.
-  await removeSavedServer(SEEDED_API_BASE);
+  await removeSavedServer(MAUSHAUS_API_BASE);
 });
 
 afterEach(() => {
@@ -138,34 +138,34 @@ describe("saved servers across a server switch", () => {
 
   it("keeps a label on the server it left and the server it returns to", async () => {
     store.clear();
-    await loadSavedServers(); // Seeds the home server with its label, as a fresh install has it.
-    await saveApiBase(SEEDED_API_BASE, {});
+    await loadSavedServers(); // Seeds Maushaus with its label, as a fresh install has it.
+    await saveApiBase(MAUSHAUS_API_BASE, {});
     await saveApiBase(TWO, {});
     expect(savedServers()).toEqual([
       { apiBase: TWO, headers: {} },
-      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+      { apiBase: MAUSHAUS_API_BASE, headers: {}, label: MAUSHAUS_LABEL },
     ]);
-    await saveApiBase(SEEDED_API_BASE, {});
+    await saveApiBase(MAUSHAUS_API_BASE, {});
     expect(savedServers()).toEqual([
-      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+      { apiBase: MAUSHAUS_API_BASE, headers: {}, label: MAUSHAUS_LABEL },
       { apiBase: TWO, headers: {} },
     ]);
   });
 
-  it("seeds the home server on a fresh store and writes the seed marker", async () => {
+  it("seeds Maushaus on a fresh store and writes the seed marker", async () => {
     store.clear();
     await loadSavedServers();
     expect(savedServers()).toEqual([
-      { apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL },
+      { apiBase: MAUSHAUS_API_BASE, headers: {}, label: MAUSHAUS_LABEL },
     ]);
-    expect(store.get(SAVED_KEY)).toContain(SEEDED_API_BASE);
+    expect(store.get(SAVED_KEY)).toContain(MAUSHAUS_API_BASE);
     expect(store.get("rakazo.saved_servers_seeded")).toBe("1");
   });
 
-  it("does not resurrect the home server after it is removed", async () => {
+  it("does not resurrect Maushaus after it is removed", async () => {
     store.clear();
     await loadSavedServers();
-    expect(await removeSavedServer(SEEDED_API_BASE)).toBe(true);
+    expect(await removeSavedServer(MAUSHAUS_API_BASE)).toBe(true);
     await loadSavedServers();
     expect(savedServers()).toEqual([]);
     expect(store.get("rakazo.saved_servers_seeded")).toBe("1");
@@ -183,7 +183,7 @@ describe("saved servers across a server switch", () => {
     store.clear();
     await loadSavedServers();
     expect(savedServers()).toHaveLength(1);
-    expect(savedServers()[0]?.apiBase).toBe(SEEDED_API_BASE);
+    expect(savedServers()[0]?.apiBase).toBe(MAUSHAUS_API_BASE);
     expect(store.get(SAVED_KEY)).not.toContain("3100");
   });
 

@@ -4,18 +4,18 @@ import * as SecureStore from "expo-secure-store";
 import { defaultApiBase, normalizeApiBase } from "./endpoint";
 
 const SAVED_SERVERS_KEY = "rakazo.saved_servers";
-/** Written once the the home server entry has been seeded, so removing it never resurrects it. */
+/** Written once the Maushaus entry has been seeded, so removing it never resurrects it. */
 const SAVED_SERVERS_SEEDED_KEY = "rakazo.saved_servers_seeded";
 export const MAX_SAVED_SERVERS = 5;
 /** A label longer than this is truncated, not dropped. */
 export const MAX_SAVED_SERVER_LABEL_LENGTH = 40;
 /** The pre-filled server. The laptop server is never pre-filled: it is loopback-only. */
-export const SEEDED_API_BASE = "https://rakazo.example.com";
-export const SEEDED_LABEL = "Home server";
+export const MAUSHAUS_API_BASE = "https://rakazo.example.com";
+export const MAUSHAUS_LABEL = "Home server";
 
 /**
  * A server the device has used before, with the custom headers it was configured with. `label`
- * is a display name the fork sets for a server (the home server); entries without one show their host.
+ * is a display name the fork sets for a server (Maushaus); entries without one show their host.
  */
 export type SavedServer = { apiBase: string; headers: Record<string, string>; label?: string };
 
@@ -78,6 +78,15 @@ function parseSavedServers(stored: string | null): SavedServer[] {
   return entries.slice(0, MAX_SAVED_SERVERS);
 }
 
+/** True once the saved-servers list has been seeded, so a later launch can tell a first launch from a device that removed every server. */
+export async function savedServersSeeded(): Promise<boolean> {
+  try {
+    return (await SecureStore.getItemAsync(SAVED_SERVERS_SEEDED_KEY)) !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function readSavedServers(): Promise<void> {
   let stored: string | null = null;
   try {
@@ -95,7 +104,7 @@ async function readSavedServers(): Promise<void> {
 }
 
 /**
- * Seeds the list with the home server the first time it is read with no stored list. The marker is a
+ * Seeds the list with Maushaus the first time it is read with no stored list. The marker is a
  * separate key because an empty list deletes the list key, so "key absent" recurs after the user
  * removes the last entry and cannot by itself tell "never seeded" from "removed everything".
  * A failed seed write leaves the marker unwritten, so a later load retries.
@@ -109,7 +118,7 @@ async function seedSavedServers(): Promise<void> {
     return;
   }
   if (seeded) return;
-  const seed: SavedServer[] = [{ apiBase: SEEDED_API_BASE, headers: {}, label: SEEDED_LABEL }];
+  const seed: SavedServer[] = [{ apiBase: MAUSHAUS_API_BASE, headers: {}, label: MAUSHAUS_LABEL }];
   if (!(await persist(seed))) return;
   saved = seed;
   await bestEffort(

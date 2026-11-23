@@ -2,13 +2,27 @@ import * as SecureStore from "expo-secure-store";
 import { vi } from "vitest";
 import type { MobileMessage, MobileSnapshot } from "./mobile-types.js";
 
+/** Mirrors the device: SecureStore keys hold only letters, digits, `.`, `-` and `_`. */
+function assertValidKey(key: string): void {
+  if (!/^[\w.-]+$/.test(key)) {
+    throw new Error(
+      `Invalid key provided to SecureStore. Keys must not be empty and contain only alphanumeric characters, ".", "-", and "_".`,
+    );
+  }
+}
+
 /** Shared fixtures for the mobile API tests. */
 export function mockSecureStore(store: Map<string, string>) {
-  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+    assertValidKey(key);
+    return store.get(key) ?? null;
+  });
   vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+    assertValidKey(key);
     store.delete(key);
   });
   vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+    assertValidKey(key);
     store.set(key, value);
   });
 }
